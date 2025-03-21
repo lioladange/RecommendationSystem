@@ -16,6 +16,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 import uvicorn
 from datetime import datetime
+from loguru import logger
 
 
 def get_model_path(path: str) -> str:
@@ -53,55 +54,74 @@ def batch_load_sql(query: str) -> pd.DataFrame:
 #    with SessionLocal() as db:
 #        return db
 
-def load_features() -> pd.DataFrame:
-    return batch_load_sql('SELECT * FROM kravtsova_user_info').drop('index', axis=1)
 
-def load_features_file() -> pd.DataFrame:
-    return pd.read_csv('features.csv').drop('index', axis=1)
+#эта функция загружает таблицы из файлов, если from_file=True (это удобно для отладки,
+# для быстрого запуска сервиса), либо из базы данных, если from_file=False
+def load_tables(from_file=False):
+    if not from_file:
+        logger.info("post features loading")
+        post_features = batch_load_sql('SELECT * FROM kravtsova_post_features').drop('index', axis=1)
+        # post_features.to_csv('post_features.csv')
 
-def load_posts() -> pd.DataFrame:
-    return batch_load_sql('SELECT * FROM post_text_df')
+        logger.info("user features loading")
+        users = batch_load_sql('SELECT * from user_data')
+        # users.to_csv('users.csv')
 
-def load_posts_file() -> pd.DataFrame:
-    return pd.read_csv('df_posts.csv').drop('index', axis=1)
+        logger.info("posts loading")
+        df_posts = batch_load_sql('SELECT * FROM post_text_df')
+        # df_posts.to_csv('df_posts.csv')
 
-#загружаем таблицу с постами
+        logger.info("liked posts loading")
+        df_liked = batch_load_sql("SELECT distinct post_id, user_id FROM public.feed_data where action='like'")
+        # df_liked.to_csv('df_liked.csv')
+
+    else:
+        logger.info("post features loading")
+        post_features = pd.read_csv('post_features.csv').drop('Unnamed: 0', axis=1)
+
+        logger.info("user features loading")
+        users = pd.read_csv('users.csv').drop('Unnamed: 0', axis=1)
+
+        logger.info("posts loading")
+        df_posts = pd.read_csv('df_posts.csv').drop('index', axis=1)
+
+        logger.info("liked posts loading")
+        df_liked = pd.read_csv('df_liked.csv').drop('Unnamed: 0', axis=1)
+
+    return post_features, users, df_posts, df_liked
+
+
+post_features, users, df_posts, df_liked = load_tables(from_file=False)
 model = load_models()
-features = load_features()
-#features.to_csv('features.csv')
-#features = load_features_file()
-df_posts = load_posts()
-#df_posts.to_csv('df_posts.csv')
-#df_posts = load_posts_file()
-#копируем для будущего применения
-df_post_original = df_posts.copy()
 
-### обрабатываем таблицу с постами: удаляем текст и кодируем колонку topic (ohe)
-one_hot_df = pd.get_dummies(df_posts['topic'], prefix='topic', drop_first=True, dtype=int)
-df_posts = pd.concat((df_posts.drop(['topic', 'text'], axis=1), one_hot_df), axis=1)
+# из этой таблицы будем доставать сами посты для ответа (по индексам)
+#df_post_original = df_posts.copy()
 
-catboost_features = ['user_id', 'age', 'city', 'exp_group', 'os_iOS', 'source_organic',
-       'gender_1', 'country_Belarus', 'country_Cyprus', 'country_Estonia',
-       'country_Finland', 'country_Kazakhstan', 'country_Latvia',
-       'country_Russia', 'country_Switzerland', 'country_Turkey',
-       'country_Ukraine', 'post_id', 'topic_covid', 'topic_entertainment',
-       'topic_movie', 'topic_politics', 'topic_sport', 'topic_tech', 'year',
-       'month', 'day', 'hour']
+catboost_features = [ 'gender', 'age', 'country', 'city', 'exp_group', 'os', 'source',
+                          'text', 'topic',
+                          'Text_emb_1', 'Text_emb_2', 'Text_emb_3', 'Text_emb_4',
+                         'Text_emb_5', 'Text_emb_6', 'Text_emb_7', 'Text_emb_8', 'Text_emb_9',
+                         'Text_emb_10', 'Text_emb_11', 'Text_emb_12', 'Text_emb_13', 'Text_emb_14',
+                         'Text_emb_15', 'Text_emb_16', 'Text_emb_17', 'Text_emb_18', 'Text_emb_19',
+                         'Text_emb_20', 'Text_emb_21', 'Text_emb_22', 'Text_emb_23', 'Text_emb_24',
+                         'Text_emb_25', 'Text_emb_26', 'Text_emb_27', 'Text_emb_28', 'Text_emb_29',
+                         'Text_emb_30',
+                              'month', 'day', 'hour']
+col_list_required = ['age', 'city', 'exp_group', 'os', 'source', 'gender', 'country',
+           'topic', 'month', 'day', 'hour', 'text', 'Text_emb_1', 'Text_emb_2',
+           'Text_emb_3', 'Text_emb_4', 'Text_emb_5', 'Text_emb_6', 'Text_emb_7',
+           'Text_emb_8', 'Text_emb_9', 'Text_emb_10', 'Text_emb_11', 'Text_emb_12',
+           'Text_emb_13', 'Text_emb_14', 'Text_emb_15', 'Text_emb_16',
+           'Text_emb_17', 'Text_emb_18', 'Text_emb_19', 'Text_emb_20',
+           'Text_emb_21', 'Text_emb_22', 'Text_emb_23', 'Text_emb_24',
+           'Text_emb_25', 'Text_emb_26', 'Text_emb_27', 'Text_emb_28',
+           'Text_emb_29', 'Text_emb_30']
 
 
-
-
-
-"""
-@app.get("/post/recommendations/", response_model=List[PostGet])
-def recommended_posts(
-		id: int,
-		time: datetime = None,
-		limit: int = 5) -> List[PostGet]:
-     return user_features[user_features['user_id']==id]
-"""
 
 app = FastAPI()
+logger.info("waiting for request")
+
 @app.get("/post/recommendations/",  response_model=List[PostGet])
 def recommended_posts(
 		id: int,
@@ -110,46 +130,49 @@ def recommended_posts(
 
     # обрабатываем время, в которое нам поступил запрос, передается вместе с запросом
     # date = datetime(year=2000, month=1, day=1, hour=1)
-    global df_posts
-    time_df = np.array([[time.year,
-                         time.month,
+    global df_post_original, post_features
+
+    post_features_ = post_features.copy() #эту таблицу будем отправлять в модель для предсказания
+
+    time_df = np.array([[time.month,
                          time.day,
                          time.hour]
                         ])
+    #сохраняем в список айди всех постов, которые данный пользователь уже лайкнул
+    df_liked_list = list(df_liked[df_liked['user_id']==id]['post_id'])
+    # дропаем все посты, которые пользователь уже лайкнул
+    post_features_ = post_features_[~post_features_['post_id'].isin(df_liked_list)]
     # делаем все в numpy для ускорения
     # дублируем строку с временем запроса для конкатенации со всеми постами
-    time_df_repeated = np.repeat(time_df, df_posts.shape[0], axis=0)
-    #отбираем информацию о нужном юзере
-    user_info = np.array(features[features['user_id'] == id])
+    time_df_repeated = np.repeat(time_df, post_features_.shape[0], axis=0)
+    #отбираем информацию о нужном юзере и дропаем user_id за ненадобностью
+    user_info = np.array(users[users['user_id'] == id].drop('user_id', axis=1))
     # дублируем строку с информацией о юзере для конкатенации со всеми постами
-    user_info_repeated = np.repeat(user_info, df_posts.shape[0], axis=0)
+    user_info_repeated = np.repeat(user_info, post_features_.shape[0], axis=0)
     # склеиваем
     #если не превратить его в нампай, то остается лишняя колонка с индексом
-    df_full = np.concatenate((user_info_repeated, df_posts, time_df_repeated), axis=1)
+    df_full = np.concatenate((user_info_repeated, post_features_.drop('post_id', axis=1), time_df_repeated), axis=1)
 
-    #df_full_pd = pd.DataFrame(df_full, columns=catboost_features)
+    df_full_pd = pd.DataFrame(df_full, columns=catboost_features)
+
+    # меняем порядок колонок на нужный нам
+    df_full_pd = df_full_pd.reindex(col_list_required, axis="columns")
 
     # используем модель для предсказания
-    result = model.predict_proba(df_full)
+    result = model.predict_proba(df_full_pd)
 
     result = result[:, 1]  # берем вторую колонку с вероятностью таргета = 1
-    indicies = result.argsort()  # сортируем массив и получаем индексы в порядке убывания вероятности
-
+    indicies = np.flip(result.argsort())  # сортируем массив и получаем индексы в порядке убывания вероятности
     # отбираем по индексам айди постов
-    recommended_post_list = []
-    for i in indicies[:5]:  # забираем 5 первых индексов
-        recommended_post_list.append(df_post_original.iloc[i])
-
     final_result = []
-    for i in recommended_post_list:
-        post_obj = PostGet(id=i.iloc[0],
-                           text=i.iloc[1],
-                           topic=i.iloc[2]
+    for i in indicies[:limit]:  # забираем первыe limit индексы и строки по индексам
+        post_id = post_features_.iloc[i]['post_id'] #забираем по индексу post_id
+        post = df_posts[df_posts['post_id']==post_id] #забираем пост по пост_айди
+        #создаем объект класса PostGet из дф
+        post_obj = PostGet(id=post['post_id'].iloc[0],
+                           text=post['text'].iloc[0],
+                           topic=post['topic'].iloc[0]
                            )
         final_result.append(post_obj)
-    print(final_result)
     return final_result
 
-
-if __name__ == '__main__':
-    uvicorn.run("app:app", reload=True, access_log=False)
